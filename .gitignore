@@ -1,0 +1,28 @@
+# --- 大模型微调专用过滤 ---
+
+# 忽略模型权重文件 (防止误传几十GB的文件)
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.h5
+
+# 忽略 HuggingFace 缓存
+.cache/
+hf_cache/
+
+# 忽略微调过程中的输出目录 (checkpoints)
+output/
+checkpoints/
+runs/
+logs/
+wandb/
+
+# 忽略数据集文件夹 (假设你把数据放在 data 目录下)
+data/
+datasets/
+!data/.gitkeep  # (可选：保留data文件夹结构但不上传内容)
+
+# 忽略 Jupyter Notebook 的检查点
+.ipynb_checkpoints/
