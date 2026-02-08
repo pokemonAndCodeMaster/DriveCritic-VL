@@ -52,11 +52,11 @@ class InferencePipeline:
         # 3. 推理生成
         output_text = self.model.generate(inputs)
         result['prediction'] = output_text
-        # 推理完后，生成的中间状态其实没用了，强制回收
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()
-        gc.collect()
+        # # 推理完后，生成的中间状态其实没用了，强制回收
+        # if torch.cuda.is_available():
+        #     torch.cuda.empty_cache()
+        #     torch.cuda.ipc_collect()
+        # gc.collect()
 
         # 4. 可视化 & 输出检查
         if self.viz:
@@ -128,82 +128,76 @@ class InferencePipeline:
 
     def _reconstruct_video_tensor(self, pixel_values, grid_thw, save_path):
         """
-        逆向工程：将 Qwen 的 Patch Tensor 还原回人类可读视频
-        [修复] 适配 Patch 16 + Channel-First (C, T, H, W) 布局
+        逆向工程：适配 (Tp, C, Ph, Pw) 布局
         """
         try:
             t_grid, h_grid, w_grid = grid_thw
             n_patches, dim = pixel_values.shape
 
-            # === 1. 动态推导 Patch 规格 ===
-            # 公式: temporal_patch * patch_size^2 * 3 = dim
-            temporal_patch = 1
+            # 1. 动态推导规格
             patch_size = 14
-
-            # 针对你的 Dim=1536 (16*16*3*2)
-            if dim == 1536:
+            temporal_patch = 1
+            if dim == 1536:  # 16*16*3*2
                 patch_size = 16
                 temporal_patch = 2
-            elif dim == 1176:  # Qwen2-VL standard
+            elif dim == 1176:
                 patch_size = 14
                 temporal_patch = 2
-            elif dim == 768:
-                patch_size = 16
-                temporal_patch = 1
 
-            console.print(f"[Debug] Inferred Patch Config: P={patch_size}, T_p={temporal_patch} (Dim={dim})")
+            console.print(f"[Debug] Config: P={patch_size}, T_p={temporal_patch}, Dim={dim}")
 
-            # === 2. Reshape & Permute ===
+            # 2. Reshape 恢复 Grid
+            # [N, D] -> [Tg, Hg, Wg, D]
             tensor_vals = pixel_values.float().cpu()
-
-            # 还原 Grid: [T_grid, H_grid, W_grid, D]
             video_tensor = tensor_vals.reshape(t_grid, h_grid, w_grid, dim)
 
-            # [核心修复] 拆解 D -> (C, T_patch, P, P)
-            # 之前的错误假设是 (T, C, P, P)，导致了颜色和空间错位
+            # 3. 拆解 Patch [核心修复]
+            # 之前的错误尝试: (Tp, Ph, Pw, C) -> 导致灰褐色噪点
+            # 正确的内存布局: (Tp, C, Ph, Pw)
             video_tensor = video_tensor.reshape(
                 t_grid, h_grid, w_grid,
-                3, temporal_patch, patch_size, patch_size
+                temporal_patch, 3, patch_size, patch_size
             )
 
-            # 现在的维度: (Tg, Hg, Wg, C, Tp, Ph, Pw)
-            # 目标维度:   (Tg, Tp, Hg, Ph, Wg, Pw, C) -> (Total_T, Total_H, Total_W, C)
+            # 此时维度索引:
+            # 0: Tg
+            # 1: Hg
+            # 2: Wg
+            # 3: Tp
+            # 4: C
+            # 5: Ph
+            # 6: Pw
 
-            # Permute indices:
-            # Tg(0), Tp(4), Hg(1), Ph(5), Wg(2), Pw(6), C(3)
-            video_tensor = video_tensor.permute(0, 4, 1, 5, 2, 6, 3)
+            # 4. Permute (归位)
+            # 目标: (Tg, Tp, Hg, Ph, Wg, Pw, C)
+            # 也就是: (Total_T, Total_H, Total_W, C)
+            # 索引映射: 0, 3, 1, 5, 2, 6, 4
+            video_tensor = video_tensor.permute(0, 3, 1, 5, 2, 6, 4)
 
-            # Merge dimensions
+            # 5. Merge
             video_tensor = video_tensor.reshape(
-                t_grid * temporal_patch,  # Total Time
-                h_grid * patch_size,  # Total Height
-                w_grid * patch_size,  # Total Width
-                3  # Channels
+                t_grid * temporal_patch,
+                h_grid * patch_size,
+                w_grid * patch_size,
+                3
             )
 
-            # 转 numpy
+            # ... (后续转 numpy, 反归一化, 保存代码不变) ...
             video_tensor = video_tensor.numpy()
-
-            # === 3. 反归一化 & 保存 ===
-            # (x * std + mean)
             video_tensor = video_tensor * self.std + self.mean
             video_tensor = np.clip(video_tensor, 0, 1)
             video_tensor = (video_tensor * 255).astype(np.uint8)
 
+            # Save
             h_real, w_real = video_tensor.shape[1:3]
-            console.print(f"[Debug] Reconstructed Video Shape: {video_tensor.shape}")
-
             out = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*'mp4v'), 2.0, (w_real, h_real))
             for i in range(len(video_tensor)):
-                # RGB -> BGR for OpenCV
                 frame = cv2.cvtColor(video_tensor[i], cv2.COLOR_RGB2BGR)
                 out.write(frame)
             out.release()
 
         except Exception as e:
-            console.print(f"[bold red]Failed to reconstruct debug video:[/bold red] {e}")
-            import traceback
-            traceback.print_exc()
+            console.print(f"[red]Reconstruct Error: {e}[/red]")
 
     def _run_visualization(self, task_id, video_path, inputs):
         """执行可视化 & 输出检查"""
