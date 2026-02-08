@@ -49,8 +49,10 @@ class NuScenesDataset(BaseDataset):
                 # 获取当前帧的图片路径
                 if target_cam == 'ALL':
                     # 6视图顺时针：Front, FrontRight, BackRight, Back, BackLeft, FrontLeft
-                    cams = ['CAM_FRONT', 'CAM_FRONT_RIGHT', 'CAM_BACK_RIGHT',
-                            'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_FRONT_LEFT']
+                    cams = [
+                        'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
+                        'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'
+                    ]
                     current_frame_imgs = []
                     for c in cams:
                         sd_token = sample['data'][c]
@@ -126,8 +128,10 @@ class DriveLMDataset(BaseDataset):
                     continue
 
                 # 提取 6 视图路径
-                cams = ['CAM_FRONT', 'CAM_FRONT_LEFT', 'CAM_FRONT_RIGHT',
-                        'CAM_BACK', 'CAM_BACK_LEFT', 'CAM_BACK_RIGHT']
+                cams = [
+                    'CAM_FRONT_LEFT', 'CAM_FRONT', 'CAM_FRONT_RIGHT',
+                    'CAM_BACK_LEFT', 'CAM_BACK', 'CAM_BACK_RIGHT'
+                ]
                 img_paths = []
                 for c in cams:
                     sd_token = sample['data'][c]

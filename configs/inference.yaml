@@ -1,32 +1,61 @@
+# configs/inference.yaml
+
 # ================= 全局配置 =================
-output_dir: "./outputs/result_drivelm_v1"
+output_dir: "./outputs/debug_run"
 device: "auto"
 
-# ================= 模式选择 =================
-# mode: "dataset" 或 "single"
-mode: "dataset"
+# 模式: "dataset" (跑全量) 或 "single" (跑特定ID)
+mode: "single"
 
-# ================= 数据配置 =================
-# 1. 如果 mode=dataset，读取这里
+# ================= 数据集配置 =================
 dataset:
-  name: "drivelm"  # 对应 all_datasets.yaml 里的 key
-  config_path: "configs/all_datasets.yaml"
+  name: "nuscenes"
+  config_path: "configs/datasets.yaml"
 
-# 2. 如果 mode=single，读取这里
+# ================= 单样本配置 (当 mode=single 时生效) =================
 single_input:
-  video_path: "/path/to/my_video.mp4"
-  prompt: "Describe the driving scene details."
+  # 优先使用 sample_id 在数据集中查找 (推荐)
+  # 你可以从 tools/check_dataset.py 的输出中复制一个 ID
+  sample_id: "scene-0061"
+
+  # 备用方案: 如果 id 为空，才使用下面的 raw path (用于测试外部视频)
+  video_path: ""
+  prompt: |
+    这是一个由车载摄像头拍摄的拼接视频。
+    画面布局说明：
+    - 左上：左前视角 (Front Left)
+    - 中上：正前视角 (Front)
+    - 右上：右前视角 (Front Right)
+    - 左下：左后视角 (Back Left)
+    - 中下：正后视角 (Back)
+    - 右下：右后视角 (Back Right)
+    
+    视频左上角标注了当前的时间戳 (Time) 和帧号 (Frame)。
+    
+    任务：请分析自车（Ego Car）的驾驶行为。请结合"车道线"的位置和"周围车辆"的动态，判断当前是否在进行变道？
+    如果发生变道，请说明是从哪个方向变向哪个方向。请引用具体的视角（如“左后视角”）来支持你的观察。
 
 # ================= 模型配置 =================
 model:
-  path: "Qwen3-VL-2B-Instruct"
-  max_new_tokens: 512
-  load_bit: 16  # 16(bf16) or 4(bnb4)
+  path: "./models/Qwen3-VL-2B-Instruct"
+  max_new_tokens: 1024
+  # 开启4bit量化精度，16bit显存吃不消
+  load_bit: 4
+  # 2.0 fps 配合 max_pixels 决定了最终的时间分辨率
+  sample_fps: 1.0
+  min_pixels: 65536  # 64 * 32 * 32
+
+  # 天花板：限制在约 600万像素 (约 7600 个Token)
+  # 计算：6,021,120 像素。
+  # 对于 640x360 的视频，这允许模型“看”约 26 帧。
+  # 这在 16GB 显存下是安全的 (显存占用约 12-13GB)。
+#  max_pixels: 6021120
+  total_pixels: 5000000  # 20480 * 32 * 32
 
 # ================= 可视化配置 =================
 visualization:
   enabled: true
-  layers: [10, 20, 26]
-  keywords: ["car", "traffic light", "pedestrian"]
+  save_dir: "heatmaps"
+  target_layers: [15, 25]
+  keywords: ["ego car", "pedestrian", "intersection"]
   font_path: "assets/SimHei.ttf"
-  save_dir: "viz_heatmaps"  # 相对 output_dir 的路径

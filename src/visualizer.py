@@ -17,7 +17,6 @@ class AttentionVisualizer:
         self.tokenizer = tokenizer
         self.font_prop = self._check_and_load_font()
 
-        # 动态获取 Token ID
         try:
             self.VISION_START_ID = tokenizer.convert_tokens_to_ids("<|vision_start|>")
             self.VISION_END_ID = tokenizer.convert_tokens_to_ids("<|vision_end|>")
@@ -33,7 +32,7 @@ class AttentionVisualizer:
 
     def _find_keyword_indices(self, input_ids, prompt_start_idx):
         """
-        查找关键词。增加 Debug 信息，确保关键词真的在 Prompt 里。
+        查找关键词，增加调试信息
         """
         keywords = self.cfg.get('keywords', [])
         if not keywords: return {}
@@ -48,9 +47,12 @@ class AttentionVisualizer:
 
         # Debug: 打印解码后的 Prompt，确认里面有关键词
         decoded_prompt = self.tokenizer.decode(prompt_ids)
-        # print(f"[Viz Debug] Prompt content for matching: {decoded_prompt[:50]}...")
+        print(f"[Viz Debug] Prompt content for matching: {decoded_prompt[:50]}...")
 
         kw_map = {}
+
+        print(f"[Viz Debug] Matching keywords against prompt (Length: {len(prompt_ids)} tokens)...")
+
         for kw in keywords:
             kw_tokens = self.tokenizer.encode(kw, add_special_tokens=False)
             if not kw_tokens: continue
@@ -68,14 +70,14 @@ class AttentionVisualizer:
                 kw_map[kw] = list(set(indices))
                 print(f"[Viz] Found keyword '{kw}' at {len(indices)} positions.")
             else:
-                pass
-                # print(f"[Viz] Keyword '{kw}' not found in prompt.")
+                print(f"[Viz Warning] Keyword '{kw}' NOT found in prompt. Check your tokenizer/prompt.")
 
+        print(f"[Viz Info] Keywords successfully mapped: {list(kw_map.keys())}")
         return kw_map
 
     def _find_best_grid_shape(self, num_tokens, img_h, img_w):
         """
-        [核心修复算法] 因子分解法
+        因子分解法
         寻找 h * w = num_tokens，使得 w/h 最接近 img_w/img_h
         """
         target_ratio = img_w / img_h
@@ -91,12 +93,10 @@ class AttentionVisualizer:
                 for h_cand, w_cand in [(h, w), (w, h)]:
                     ratio = w_cand / h_cand
                     diff = abs(ratio - target_ratio)
-
                     if diff < min_diff:
                         min_diff = diff
                         best_h = h_cand
                         best_w = w_cand
-
         return best_h, best_w
 
     def _generate_heatmap(self, frame, attn_flat):
@@ -108,7 +108,6 @@ class AttentionVisualizer:
 
             # === 使用因子分解法计算 Grid ===
             h_grid, w_grid = self._find_best_grid_shape(num_tokens, h_img, w_img)
-            # ============================
 
             # Reshape
             attn_2d = attn_flat.reshape(h_grid, w_grid).float().cpu().numpy()
@@ -118,18 +117,15 @@ class AttentionVisualizer:
             attn_norm = attn_norm / (attn_norm.max() + 1e-9)
             attn_uint8 = (attn_norm * 255).astype(np.uint8)
 
-            # 高质量 Resize (CUBIC 比 LINEAR 更平滑，减少马赛克感)
+            # 使用 CUBIC 插值更平滑
             attn_resized = cv2.resize(attn_uint8, (w_img, h_img), interpolation=cv2.INTER_CUBIC)
             heatmap = cv2.applyColorMap(attn_resized, cv2.COLORMAP_JET)
 
             return cv2.addWeighted(frame, 0.5, heatmap, 0.5, 0)
-
-        except Exception as e:
-            print(f"[Viz Error] Heatmap calc failed: {e}")
+        except:
             return frame
 
     def _create_summary_grid(self, image_paths, save_path):
-        """生成超高分辨率汇总图"""
         if not image_paths: return
         try:
             img0 = cv2.imread(image_paths[0])
@@ -137,24 +133,17 @@ class AttentionVisualizer:
 
             # 布局优化：如果是 20 帧，不要垂直排，做成 4列 x 5行
             n = len(image_paths)
-            cols = 2  # 增加列数
+            cols = 2
             rows = math.ceil(n / cols)
-
             canvas = np.ones((rows * h, cols * w, c), dtype=np.uint8) * 255
-
             for i, p in enumerate(image_paths):
                 img = cv2.imread(p)
                 if img is None: continue
-
-                r = i // cols
-                c_idx = i % cols
-
+                r, c_idx = i // cols, i % cols
                 y_s, y_e = r * h, (r + 1) * h
                 x_s, x_e = c_idx * w, (c_idx + 1) * w
-
                 if img.shape != (h, w, c): img = cv2.resize(img, (w, h))
                 canvas[y_s:y_e, x_s:x_e] = img
-
             cv2.imwrite(save_path, canvas)
         except:
             pass
@@ -172,13 +161,16 @@ class AttentionVisualizer:
         try:
             v_start_indices = (input_ids == self.VISION_START_ID).nonzero(as_tuple=True)[0]
             v_end_indices = (input_ids == self.VISION_END_ID).nonzero(as_tuple=True)[0]
-
             if len(v_start_indices) == 0: return
             v_start_idx = v_start_indices[0].item() + 1
             v_end_idx = v_end_indices[-1].item()
             prompt_start_idx = v_end_idx + 1
         except:
             return
+
+        # === [维测点 1] 打印 Token 总数 ===
+        total_vis_tokens = v_end_idx - v_start_idx
+        print(f"[Viz Debug] Total Vision Tokens: {total_vis_tokens}")
 
         # 3. 关键词映射 (确保关键词在 Prompt 中存在！)
         kw_map = self._find_keyword_indices(input_ids, prompt_start_idx)
@@ -188,20 +180,48 @@ class AttentionVisualizer:
             grid_thw = engine_inputs.video_grid_thw[0].cpu().numpy()
             if len(grid_thw.shape) == 2: grid_thw = grid_thw[0]
             t_grid = grid_thw[0]
+            h_grid_raw = grid_thw[1]
+            w_grid_raw = grid_thw[2]
         else:
             t_grid = 1
+
+        # === [维测点 2] 打印 Grid 信息 ===
+        print(f"[Viz Debug] Model Grid (T, H, W): ({t_grid}, {h_grid_raw}, {w_grid_raw})")
 
         # 5. 视频信息
         cap = cv2.VideoCapture(video_path)
         total_frames_video = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        if total_frames_video == 0: return
+        if total_frames_video == 0:
+            print("[Viz Error] Video frame count is 0!")
+            return
 
-        # === 需求1: 生成更多帧 ===
-        # 使用 stride 方式，或者指定生成数量
-        # 这里设置为每隔 1 个时间步生成一张 (dense)
-        model_t_indices = np.arange(0, t_grid, 1)
+        # === [维测点 3] 检查采样逻辑 ===
+        # 你的配置文件里 stride 可能默认是 4
+        stride = self.cfg.get('frame_stride', 1)
+
+        # 动态调整逻辑
+        # 如果模型认为的时间步 T 很短 (比如只有 4 步)，而我们设置 stride=4，那就只剩 1 帧了。
+        # 我们强制保证至少输出 min(T, 4) 张图
+        if t_grid > 1:
+            # 如果按当前 stride 采样会导致帧数太少 (< 3)，强制缩小 stride
+            if len(np.arange(0, t_grid, stride)) < 3:
+                new_stride = max(1, t_grid // 4)  # 尝试均匀采 4 张
+                print(f"[Viz Auto] Stride {stride} is too large for T={t_grid}. Adjusting to {new_stride}")
+                stride = new_stride
+        else:
+            stride = 1
+
+        model_t_indices = np.arange(0, t_grid, stride)
+
+        print(f"[Viz Debug] Sampling Indices (Model T): {model_t_indices}")
+        print(f"[Viz Debug] Raw Video Frames: {total_frames_video}")
+
         # 映射回原始视频帧
+        # 使用 linspace 确保原始帧的时间点和模型的时间点对齐
+        # 注意：这里要把 float 转 int
         raw_frame_indices = np.linspace(0, total_frames_video - 1, t_grid, dtype=int)[model_t_indices]
+
+        print(f"[Viz Info] Visualizing {len(model_t_indices)} frames. Indices: {model_t_indices}")
 
         # 6. 逐层可视化
         target_layers = self.cfg.get('layers', [10, 20])
@@ -223,13 +243,20 @@ class AttentionVisualizer:
 
                 # 计算切片
                 total_vis_tokens = v_end_idx - v_start_idx
+                # === [维测点 4] 检查切片范围 ===
                 tokens_per_frame = total_vis_tokens // t_grid
                 curr_start = v_start_idx + (t_idx * tokens_per_frame)
                 curr_end = curr_start + tokens_per_frame
 
+                # 打印每一帧的切片情况
+                print(f"[Viz Debug] Frame {i}: T={t_idx}, Token Range=[{curr_start}:{curr_end}], Size={curr_end-curr_start}")
+
                 # 切片 Attention
                 attn_slice = layer_attn_full[prompt_start_idx:, curr_start:curr_end]
-                if attn_slice.shape[1] == 0: continue
+                # 如果切片为空，说明越界了
+                if attn_slice.shape[1] == 0:
+                    print(f"[Viz Warn] Empty slice for T={t_idx}. Skipping.")
+                    continue
 
                 # A. Global
                 spatial_attn_flat = attn_slice.mean(dim=0)
@@ -242,25 +269,23 @@ class AttentionVisualizer:
                         # 对该关键词的所有 token 取平均
                         kw_heatmaps[kw] = kw_slice.mean(dim=0)
 
-                # === 绘图 (需求2: 高分辨率) ===
+                # === 绘图 ===
                 num_plots = 2 + len(kw_map)
-                # 增加 figsize, (宽, 高)
-                # 假设原图是 1920x720，我们希望输出大一点
-                fig, axes = plt.subplots(1, num_plots, figsize=(8 * num_plots, 6))
+                # 分辨率提升: 宽度 10 * num_plots, 高度 8
+                fig, axes = plt.subplots(1, num_plots, figsize=(10 * num_plots, 8))
                 if num_plots == 1: axes = [axes]
 
-                # 1. 原图
                 frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+
+                # 1. 原图
                 axes[0].imshow(frame_rgb)
-                # 字体调大
-                axes[0].set_title(f"Layer {layer_idx} | T_model={t_idx} | Frame={raw_idx}",
-                                  fontproperties=self.font_prop, fontsize=16)
+                axes[0].set_title(f"L{layer_idx} | T={t_idx}", fontproperties=self.font_prop, fontsize=20)
                 axes[0].axis('off')
 
                 # 2. Global
                 hm_overall = self._generate_heatmap(frame_bgr, spatial_attn_flat)
                 axes[1].imshow(cv2.cvtColor(hm_overall, cv2.COLOR_BGR2RGB))
-                axes[1].set_title("Global Attention", fontproperties=self.font_prop, fontsize=16)
+                axes[1].set_title("Global Attention", fontproperties=self.font_prop, fontsize=20)
                 axes[1].axis('off')
 
                 # 3. Keywords
@@ -268,12 +293,13 @@ class AttentionVisualizer:
                     ax = axes[2 + k_i]
                     hm_kw = self._generate_heatmap(frame_bgr, kw_attn_flat)
                     ax.imshow(cv2.cvtColor(hm_kw, cv2.COLOR_BGR2RGB))
-                    ax.set_title(f"Focus: {kw}", fontproperties=self.font_prop, fontsize=16)
+                    ax.set_title(f"Focus: {kw}", fontproperties=self.font_prop, fontsize=20)
                     ax.axis('off')
 
-                save_path = os.path.join(layer_dir, f"frame_{i:03d}.jpg")
+                save_path = os.path.join(layer_dir, f"frame_{i:03d}_T{t_idx}.jpg")
                 plt.tight_layout()
-                plt.savefig(save_path, dpi=150)  # 提高 DPI
+                # 提高 DPI 到 150 (原图如果很大，这个值决定了最终保存图片的清晰度)
+                plt.savefig(save_path, dpi=150)
                 plt.close(fig)
                 summary_images.append(save_path)
 

@@ -5,67 +5,63 @@ from .base import BaseComposer
 
 class NuScenesGridComposer(BaseComposer):
     """
-    将 6 视图拼接，并添加视角标签和时间戳
+    将 6 视图拼接 (输入顺序已在 Dataset 层统一为 FL, F, FR, BL, B, BR)
     """
 
     def compose_layout(self, img_source):
-        # 顺序: [Front Left, Front, Front Right, Back Left, Back, Back Right]
+        # 此时 img_source 必定是:
+        # [Front Left, Front, Front Right, Back Left, Back, Back Right]
+
         if not isinstance(img_source, list) or len(img_source) < 6:
             return None
 
         imgs = [cv2.imread(p) for p in img_source]
         if any(img is None for img in imgs): return None
 
-        # 1. 统一 Resize (提升分辨率以看清文字)
-        # 单图 800x450 -> 拼接后 2400x900
+        # 1. 统一 Resize
         target_w, target_h = 800, 450
         resized = [cv2.resize(img, (target_w, target_h)) for img in imgs]
 
-        # 2. 定义标签
+        # 2. 定义标签 (与 Dataset 输出顺序严格对应)
         labels = [
             "Front Left", "Front", "Front Right",
             "Back Left", "Back", "Back Right"
         ]
 
-        # 3. 绘制标签 (每个子图内)
+        # 3. 绘制标签
         for img, label in zip(resized, labels):
-            # 加个半透明黑底背景，保证字能看清
-            # 放在子图的底部居中，避免遮挡顶部天空信息
             h, w = img.shape[:2]
-
-            # 标签背景条
             overlay = img.copy()
-            cv2.rectangle(overlay, (0, 0), (200, 40), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.5, img, 0.5, 0, img)
 
-            # 白色文字
-            cv2.putText(img, label, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+            # 标签背景条：放在底部居中，半透明黑色
+            # 避免遮挡上方天空，也避免遮挡左上角可能存在的原始数据
+            cv2.rectangle(overlay, (0, h - 40), (220, h), (0, 0, 0), -1)
+            cv2.addWeighted(overlay, 0.6, img, 0.4, 0, img)
+
+            # 文字
+            cv2.putText(img, label, (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX,
                         0.9, (255, 255, 255), 2)
 
-        # 4. 拼接
-        # 上排: FL, F, FR
+        # 4. 拼接 (直接按顺序切分)
+        # 上排: Indices 0, 1, 2
         top = np.hstack(resized[:3])
-        # 下排: BL, B, BR
+        # 下排: Indices 3, 4, 5
         bot = np.hstack(resized[3:])
 
         grid = np.vstack([top, bot])
         return grid
 
     def draw_overlays(self, image, meta, t_idx):
-        """覆盖时间戳 (移到底部)"""
+        """覆盖时间戳 (放在整个画面的左上角，显眼位置)"""
         h, w = image.shape[:2]
-
-        # 计算时间戳 (假设 2Hz)
         timestamp = t_idx * (1.0 / self.fps)
-        text = f"Time: {timestamp:.1f}s | Frame: {t_idx}"
+        text = f"T: {timestamp:.1f}s | F: {t_idx}"
 
-        # 背景条 (放在整个画面的最底部)
-        # 黑色实底，高 60 像素
-        cv2.rectangle(image, (0, h - 60), (500, h), (0, 0, 0), -1)
-
-        # 黄色文字
-        cv2.putText(image, text, (20, h - 15), cv2.FONT_HERSHEY_SIMPLEX,
-                    1.2, (0, 255, 255), 3)
+        # 大背景条 (顶部)
+        cv2.rectangle(image, (0, 0), (w, 50), (0, 0, 0), -1)
+        # 亮黄色文字
+        cv2.putText(image, text, (30, 35), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.2, (0, 255, 255), 2)
 
         return image
 
