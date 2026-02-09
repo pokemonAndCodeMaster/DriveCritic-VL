@@ -2,49 +2,106 @@
 
 DriveCritic-VL 是一个专为自动驾驶场景分析设计的视觉-语言模型（VLM）框架。它基于 **Qwen3-VL** 架构，能够理解多视角的驾驶视频数据，并提供驾驶行为分析、场景描述以及对自我车辆（Ego-Car）的决策评价。
 
+## 🚀 核心架构与设计 (Architecture & Design)
+
+本项目采用模块化分层设计，主要分为数据层、核心层、工具层和配置层。
+
+### 1. 系统架构图 (System Architecture)
+
+```mermaid
+graph TD
+    A[Dataset Layer] -->|Raw Images/Metadata| B(Video Composer)
+    B -->|Processed MP4| C{Inference Pipeline}
+    D[Config Layer] --> C
+    D --> A
+    
+    subgraph Core Engine
+    C -->|Prepare Inputs| E[Qwen Model Wrapper]
+    E -->|Tokens/Tensors| F[Qwen3-VL Model]
+    F -->|Logits/Attention| C
+    end
+    
+    subgraph Visualization
+    C -->|Attn Weights| G[Attention Visualizer]
+    G -->|Heatmaps| H[Output Directory]
+    end
+    
+    subgraph Debugging
+    C -->|Inspect Tensor| I[Debug Reconstructor]
+    I -->|Reconstructed Video| H
+    end
+```
+
+### 2. 核心工作流 (Workflow)
+
+1.  **初始化阶段**：
+    *   `main.py` 读取 `configs/inference.yaml`。
+    *   `DatasetFactory` 根据配置加载指定数据集（NuScenes, DriveLM, LingoQA）。
+    *   `InferencePipeline` 初始化模型 wrapper、composer 和 visualizer。
+
+2.  **数据处理阶段**：
+    *   **懒加载 (Lazy Loading)**：Pipeline 检查是否已有视频缓存。
+    *   **实时合成 (On-the-fly Composition)**：如果没有缓存，`VideoComposer` 将多视角/时序图片拼接成 MP4 视频。
+    *   **预处理**：`QwenModelWrapper` 将视频和文本 Prompt 转换为模型所需的 Tensor (Input IDs, Pixel Values)。
+
+3.  **推理与调试阶段**：
+    *   **输入维测 (`_inspect_inputs`)**：Pipeline 会将送入模型的 Pixel Values 逆向还原为视频 (`model_seen_input.mp4`)，用于验证预处理是否正确（检查归一化、Patch布局）。
+    *   **模型前向**：Qwen3-VL 执行推理，生成文本。
+    *   **输出维测 (`_inspect_outputs`)**：分析 Logits 和 Attention 层的形状。
+
+4.  **后处理阶段**：
+    *   **可视化**：如果开启，`AttentionVisualizer` 提取 Attention Map 并叠加在原始视频帧上。
+    *   **结果保存**：生成的文本和可视化结果存入 `outputs/`。
+
+### 3. 类图设计 (Class Structure)
+
+*   **`InferencePipeline` (src/core/pipeline.py)**
+    *   **职责**：总控类，协调数据流。
+    *   **关键方法**：
+        *   `run_sample()`: 执行单样本全流程。
+        *   `_inspect_inputs()`: **[New]** 深度解析输入 Tensor，逆向还原视频以排查花屏/噪声问题。
+        *   `_reconstruct_video_tensor()`: **[New]** 处理 (Tp, C, Ph, Pw) 复杂布局的 Tensor 还原。
+*   **`QwenModelWrapper` (src/core/model_wrapper.py)**
+    *   **职责**：封装 HuggingFace Transformer 接口。
+    *   **关键方法**：
+        *   `prepare_inputs()`: 处理 Chat Template 和 Vision Info。
+        *   `forward_for_viz()`: 开启 `output_attentions=True` 的前向传播。
+*   **`BaseDataset` & Subclasses (src/data/datasets.py)**
+    *   **职责**：标准化数据接口。
+    *   **子类**：`NuScenesDataset`, `DriveLMDataset`, `LingoQADataset`。
+    *   **数据结构**：统一封装为 `DataSample` (包含 ID, 图片路径列表, 视频路径, QA对)。
+
+---
+
 ## 🚀 快速开始 (Quick Start)
 
 ### 1. 推理功能 (Inference)
 
-本项目提供两种推理模式：**基础脚本模式**（适合快速测试）和**流水线模式**（适合生产与科研）。
-
-#### A. 基础脚本模式 (infer_base.py)
-适合无需复杂配置的单视频快速测试。
-
-*   **单视频推理：**
-    ```bash
-    python infer_base.py single --input_path assets/demo.mp4 --prompt_file prompt_demo.txt
-    ```
-*   **文件夹批量推理：**
-    ```bash
-    python infer_base.py folder --input_path data/my_videos/ --output_path results.json
-    ```
-
-#### B. 流水线模式 (main.py) [推荐]
-基于 `configs/inference.yaml` 配置文件的完整流水线，支持自动数据加载、视频合成和注意力可视化。
+#### A. 流水线模式 (main.py) [推荐]
+基于 `configs/inference.yaml` 配置文件的完整流水线。
 
 *   **单样本调试 (Single Mode)：**
-    通过 ID 运行特定样本（自动查找并加载其多视角图片/视频数据）。
     ```bash
     python main.py --config configs/inference.yaml --mode single --id scene-0061
     ```
+    *此时系统会自动触发 `InferencePipeline._inspect_inputs`，在 `outputs/debug_inspect/` 下生成调试视频。*
+
 *   **全量数据集评测 (Dataset Mode)：**
-    运行配置文件中指定的数据集全集。
     ```bash
     python main.py --config configs/inference.yaml --mode dataset
     ```
 
----
+#### B. 基础脚本模式 (infer_base.py)
+适合无需复杂配置的单视频快速测试。
+```bash
+python infer_base.py single --input_path assets/demo.mp4 --prompt_file prompt_demo.txt
+```
 
 ### 2. 模块使用指南 (Module Guide)
 
-#### 📦 数据加载与准备 (Data Loader & Preparation)
-核心代码位于 `src/data/` 和 `src/tools/`。
-
+#### 📦 数据加载与准备
 *   **生成视频缓存：**
-    自动驾驶数据集通常是图片序列。使用此工具将它们预处理为 MP4 视频，加速后续训练/推理。
     ```bash
-    # 为 nuscenes 数据集生成视频
     python src/tools/prepare_videos.py --config configs/datasets.yaml --dataset_key nuscenes --fps 2
     ```
 *   **检查数据集完整性：**
@@ -52,21 +109,13 @@ DriveCritic-VL 是一个专为自动驾驶场景分析设计的视觉-语言模�
     python src/tools/check_datasets.py
     ```
 
-#### 🖼️ 多视角视频合成 (Video Composer)
-核心代码位于 `src/utils/video_composer/`。
-该模块负责将 NuScenes/DriveLM 的 6 路环视相机图片拼接成单个视频帧。
-*   **自动触发：** 在 `main.py` 中，如果检测到本地没有视频缓存，流水线会自动调用 Composer 实时合成。
-*   **手动触发：** 使用上面的 `prepare_videos.py` 工具。
-
-#### 🧠 注意力可视化 (Attention Visualization)
-核心代码位于 `src/visualizer.py`。
-想要查看模型关注画面的哪些区域（如行人、红绿灯）：
+#### 🧠 注意力可视化
+想要查看模型关注画面的哪些区域：
 1.  修改 `configs/inference.yaml`：
     ```yaml
     visualization:
       enabled: true
-      save_dir: "heatmaps"
-      keywords: ["pedestrian", "traffic light"] # 关注的关键词
+      keywords: ["pedestrian", "car"] # 关注的关键词
     ```
 2.  运行 `main.py`，结果将保存在 `outputs/heatmaps/`。
 
@@ -74,39 +123,16 @@ DriveCritic-VL 是一个专为自动驾驶场景分析设计的视觉-语言模�
 
 ## 🛠 功能扩展指南 (Extension Guide)
 
-如果你需要添加新的数据集或视频处理逻辑，请参考以下规范：
+### 1. 添加新数据集
+1.  在 `src/data/datasets.py` 中继承 `BaseDataset`。
+2.  实现 `_load_data`，将原始数据转换为 `DataSample` 列表。
+3.  在 `src/data/factory.py` 注册新类。
 
-### 1. 添加新数据集 (Dataset)
-1.  **实现类：** 在 `src/data/datasets.py` 中继承 `BaseDataset`。
-2.  **实现 `_load_data` 方法：** 读取你的数据源，并将每个样本封装为 `DataSample` 对象。
-    *   `image_paths`: 图片路径列表（如果是多视角，则是列表的列表）。
-    *   `qa_pairs`: QA 对。
-3.  **注册：** 在 `src/data/factory.py` 的 `_REGISTRY` 中注册你的新类名。
-4.  **配置：** 在 `configs/datasets.yaml` 中添加对应的数据集配置。
+### 2. 添加新视频合成布局
+1.  在 `src/utils/video_composer/` 中继承 `BaseComposer`。
+2.  实现 `compose_layout` (例如：实现 3x2 Grid 或 环视+BEV 布局)。
+3.  在 `src/utils/video_composer/__init__.py` 注册。
 
-### 2. 添加新视频合成布局 (Layout)
-1.  **实现类：** 在 `src/utils/video_composer/` 中新建文件或在现有文件中继承 `BaseComposer`。
-2.  **实现 `compose_layout` 方法：** 输入图片列表，输出拼接好的 `numpy` 图像（H, W, 3）。
-3.  **注册：** 在 `src/utils/video_composer/__init__.py` 的 `get_composer` 函数中添加映射。
-
----
-
-## 📂 项目结构 (Structure)
-
-*   `src/core/`: 核心引擎
-    *   `model_wrapper.py`: Qwen 模型封装，处理输入 Tensor 构建。
-    *   `pipeline.py`: 推理主循环，串联数据、模型和可视化。
-*   `src/data/`: 数据管理
-    *   `datasets.py`: 各类数据集加载逻辑 (NuScenes, DriveLM 等)。
-    *   `factory.py`: 简单工厂模式，统一创建数据集实例。
-*   `src/utils/`: 工具库
-    *   `video_composer/`: 视频拼接与合成逻辑。
-*   `configs/`: 配置文件
-    *   `inference.yaml`: 推理参数（模型路径、Prompt、可视化开关）。
-    *   `datasets.yaml`: 数据集路径与元数据。
-*   `LLaMA-Factory/`: 训练子模块 (Submodule)。
-*   `outputs/`: 默认输出目录。
-
-## 📝 开发规范
-*   **配置优先：** 尽量通过修改 `yaml` 文件来调整参数，避免硬编码。
-*   **调试技巧：** 遇到模型输入相关问题，查看 `outputs/debug_inspect/` 下生成的 `model_seen_input.mp4`，这是模型实际“看到”的视频内容。
+## 📝 开发与调试规范
+*   **Tensor 检查**：如果你发现模型输出胡言乱语，首先检查 `outputs/debug_inspect/<task_id>/model_seen_input.mp4`。如果这个视频是花屏或全黑，说明预处理（归一化/尺寸）有问题，而不是模型本身的问题。
+*   **配置优先**：尽量通过 `configs/` 调整参数（如 FPS、Resolution），避免硬编码。
