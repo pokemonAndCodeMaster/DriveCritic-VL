@@ -7,13 +7,14 @@
 *.safetensors
 *.ckpt
 *.h5
+*.pyc
 
 # 忽略 HuggingFace 缓存
 .cache/
 hf_cache/
 
 # 忽略微调过程中的输出目录 (checkpoints)
-output/
+outputs/
 checkpoints/
 runs/
 logs/

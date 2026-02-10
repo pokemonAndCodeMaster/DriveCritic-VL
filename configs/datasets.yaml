@@ -1,0 +1,25 @@
+# 1. DriveLM (多视角 -> 拼接视频)
+drivelm:
+  type: drivelm
+  data_root: /home/yyh/projects/DriveCritic-VL/data/OpenDriveLab/DriveLM
+  nuscenes_root: /home/yyh/projects/DriveCritic-VL/data/OpenDriveLab/DriveLM/nuscenes
+  annotation_file: v1_1_train_nus.json
+  video_index_file: video_index.json  # [关键] 指定索引文件名
+  video_cache_dir: processed_videos     # [关键] 视频生成目录
+
+# 2. LingoQA (单视角序列 -> 时序视频)
+lingoqa:
+  type: lingoqa
+  data_root: /home/yyh/projects/DriveCritic-VL/data/LingoQA
+  subset: action
+  video_index_file: video_index.json
+  video_cache_dir: processed_videos
+
+# 3. NuScenes (多视角序列 -> 拼接+时序视频)
+nuscenes:
+  type: nuscenes
+  data_root: /home/yyh/projects/DriveCritic-VL/data/nuscenes
+  version: v1.0-mini
+  camera: ALL  # ALL 表示读取6路相机
+  video_index_file: video_index.json
+  video_cache_dir: processed_videos_6view
