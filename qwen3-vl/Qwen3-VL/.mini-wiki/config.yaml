@@ -1,0 +1,53 @@
+generation:
+  language: zh              # zh / en / both
+  detail_level: detailed    # minimal / standard / detailed
+  include_diagrams: true    # Generate Mermaid diagrams
+  include_examples: true    # Include code examples
+  link_to_source: true      # Link to source files
+  min_sections: 10          # Minimum sections per module doc
+
+diagrams:
+  architecture_style: flowchart TB
+  dataflow_style: sequenceDiagram
+  use_colors: true          # Color-code module types
+
+linking:
+  auto_cross_links: true    # Auto-generate cross references
+  generate_doc_map: true    # Generate doc-map.md
+  generate_dependency_graph: true
+
+exclude:
+  - node_modules
+  - dist
+  - "*.test.ts"
+
+# 启用插件配置
+plugins:
+  patent-generator:
+    enabled: true
+    jurisdiction: CN              # 中国专利局
+    invention_type: method        # 方法类发明
+    generation_mode: standard     # 标准生成模式
+    embodiment_count: 2           # 2 个实施例
+    term_abstraction:
+      "PyTorch": "深度学习计算框架"
+      "Hugging Face": "多模态模型集成平台"
+      "Transformers": "注意力机制神经网络架构"
+      "vLLM": "高性能推理引擎"
+      "DeepSpeed": "分布式训练优化框架"
+    forbidden_terms:
+      - trademarks: true
+      - person_names: true
+      - promotional: true
+  paper-drafter:
+    # 目标会议/期刊风格
+    template: IEEE  # IEEE | ACM | Nature_Style | Generic
+    
+    # 语言
+    language: zh  # en (推荐) | zh
+    
+    # 侧重点
+    focus: system  # system (架构) | algorithm (算法) | application (应用)
+    
+    # 是否包含伪代码
+    include_pseudocode: true
